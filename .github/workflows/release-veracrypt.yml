@@ -45,7 +45,7 @@ jobs:
         run: |
           api="https://api.github.com/repos/${GH_REPO}/actions/runs/${RUN_ID}/artifacts"
           resp="$(curl -sS -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "${api}")"
-          artifact_url="$(printf '%s' "${resp}" | python3 -c "import json,sys; data=json.load(sys.stdin); url=next((a['archive_download_url'] for a in data.get('artifacts', []) if (not a.get('expired') and a.get('name','').startswith('veracrypt-linux-debs-'))), ''); print(url)")" || {
+          artifact_url="$(printf '%s' "${resp}" | python3 -c "import json,sys; data=json.load(sys.stdin); url=next((a['archive_download_url'] for a in data.get('artifacts', []) if (not a.get('expired') and a.get('name','').startswith('veracrypt-cli-debs-'))), ''); print(url)")" || {
             echo "No artifacts found for run ${RUN_ID}." >&2
             echo "${resp}" >&2
             exit 1
@@ -57,14 +57,13 @@ jobs:
       - name: Verify artifacts
         run: |
           ls -la packages
-          test -f "packages/artifacts/veracrypt-sha256-checksums-${{ steps.tag.outputs.version }}.txt"
-          ls packages/artifacts/gui/*.deb
+          test -f "packages/artifacts/veracrypt-cli-sha256-checksums-${{ steps.tag.outputs.version }}.txt"
           ls packages/artifacts/console/*.deb
 
       - name: Create GitHub release
         uses: ncipollo/release-action@b7eabc95ff50cbeeedec83973935c8f306dfcd0b # v1.20.0
         with:
-          artifacts: packages/artifacts/gui/*.deb,packages/artifacts/console/*.deb,packages/artifacts/veracrypt-sha256-checksums-${{ steps.tag.outputs.version }}.txt
+          artifacts: packages/artifacts/console/*.deb,packages/artifacts/veracrypt-cli-sha256-checksums-${{ steps.tag.outputs.version }}.txt
           tag: ${{ steps.tag.outputs.tag }}
           name: VeraCrypt ${{ steps.tag.outputs.version }}
           generateReleaseNotes: true
