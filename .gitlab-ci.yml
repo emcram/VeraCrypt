@@ -12,10 +12,10 @@ stages:
 include:
   - project: '${GL_CICD_SHARED_PROJ}'
     ref: main
-    file: '/veracrypt/verify.yml'
+    file: '/cpp-wxwidgets/verify.yml'
   - project: '${GL_CICD_SHARED_PROJ}'
     ref: main
-    file: '/veracrypt/test.yml'
+    file: '/cpp-wxwidgets/test.yml'
   - project: '${GL_CICD_SHARED_PROJ}'
     ref: main
     file: '/github/validate.yml'
@@ -26,7 +26,89 @@ include:
 # Repo-specific overrides for this workspace
 variables:
   WXWIDGETS_VERSION: '3.2.5'
-  VC_BUILD_MODE: 'cli'
-  VC_INSTALL_TESTS: 'true'
-  VC_RUN_MOUNT_TESTS: 'false'
+  WXWIDGETS_URL: 'https://github.com/wxWidgets/wxWidgets/releases/download/v${WXWIDGETS_VERSION}/wxWidgets-${WXWIDGETS_VERSION}.tar.bz2'
+  CPP_BUILD_MODE: 'cli'
+  CPP_BASE_DEPS: 'build-essential yasm pkg-config libpcsclite-dev libfuse-dev cmake debhelper wget tar bzip2 ca-certificates'
+  CPP_GUI_DEPS: 'libgtk-3-dev libayatana-appindicator3-dev'
+  CPP_WXWIDGETS_ENABLE: 'true'
+  CPP_ARTIFACTS_DIR: 'artifacts'
+  CPP_ARTIFACT_SUBDIR_CLI: 'console'
+  CPP_ARTIFACT_SUBDIR_GUI: 'gui'
+  CPP_CHECKSUM_FILE_CLI: 'veracrypt-cli-sha256-checksums.txt'
+  CPP_CHECKSUM_FILE_GUI: 'veracrypt-gui-sha256-checksums.txt'
+  CPP_VERIFY_SETUP_SCRIPT: |
+    apt-get update -y
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends nodejs npm
+    rm -rf /var/lib/apt/lists/*
+    npm install -g fast-xml-parser@4.5.2
+  CPP_VERIFY_SCRIPT: '.github/workflows/xmlvalidate.sh "${CI_PROJECT_DIR}"'
+  CPP_BUILD_SCRIPT_CLI: |
+    make -C src WXSTATIC=1 NOGUI=1 WX_ROOT="/tmp/wxWidgets-${WXWIDGETS_VERSION}" WX_BUILD_DIR="/tmp/wxBuildConsole" wxbuild
+    make -C src WXSTATIC=1 NOGUI=1 WX_ROOT="/tmp/wxWidgets-${WXWIDGETS_VERSION}" WX_BUILD_DIR="/tmp/wxBuildConsole" clean
+    make -C src WXSTATIC=1 NOGUI=1 WX_ROOT="/tmp/wxWidgets-${WXWIDGETS_VERSION}" WX_BUILD_DIR="/tmp/wxBuildConsole"
+    make -C src WXSTATIC=1 NOGUI=1 WX_ROOT="/tmp/wxWidgets-${WXWIDGETS_VERSION}" WX_BUILD_DIR="/tmp/wxBuildConsole" install DESTDIR="/tmp/VeraCrypt_Setup/Console"
+    cmake -H"${CI_PROJECT_DIR}/src/Build" -B"/tmp/VeraCrypt_Packaging/Console" -DVERACRYPT_BUILD_DIR="/tmp/VeraCrypt_Setup/Console" -DNOGUI=TRUE
+    cpack --config /tmp/VeraCrypt_Packaging/Console/CPackConfig.cmake
+    mkdir -p artifacts/console
+    cp /tmp/VeraCrypt_Packaging/Console/Packaging/veracrypt-console-* artifacts/console/
+  CPP_BUILD_SCRIPT_GUI: |
+    make -C src WXSTATIC=1 WX_ROOT="/tmp/wxWidgets-${WXWIDGETS_VERSION}" WX_BUILD_DIR="/tmp/wxBuildGui" wxbuild
+    make -C src WXSTATIC=1 WX_ROOT="/tmp/wxWidgets-${WXWIDGETS_VERSION}" WX_BUILD_DIR="/tmp/wxBuildGui" clean
+    make -C src WXSTATIC=1 WX_ROOT="/tmp/wxWidgets-${WXWIDGETS_VERSION}" WX_BUILD_DIR="/tmp/wxBuildGui"
+    make -C src WXSTATIC=1 WX_ROOT="/tmp/wxWidgets-${WXWIDGETS_VERSION}" WX_BUILD_DIR="/tmp/wxBuildGui" install DESTDIR="/tmp/VeraCrypt_Setup/GUI"
+    cmake -H"${CI_PROJECT_DIR}/src/Build" -B"/tmp/VeraCrypt_Packaging/GUI" -DVERACRYPT_BUILD_DIR="/tmp/VeraCrypt_Setup/GUI" -DNOGUI=FALSE
+    cpack --config /tmp/VeraCrypt_Packaging/GUI/CPackConfig.cmake
+    mkdir -p artifacts/gui
+    cp /tmp/VeraCrypt_Packaging/GUI/Packaging/veracrypt-* artifacts/gui/
+  CPP_INSTALL_TESTS: 'true'
+  CPP_INSTALL_SCRIPT_CLI: |
+    apt-get update -y
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ./artifacts/console/*.deb
+  CPP_TEST_SCRIPT_CLI: |
+    veracrypt --test
+    veracrypt --version
+  CPP_UNINSTALL_SCRIPT_CLI: |
+    apt-get remove -y veracrypt-console || true
+  CPP_INSTALL_SCRIPT_GUI: |
+    apt-get update -y
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ./artifacts/gui/*.deb
+  CPP_TEST_SCRIPT_GUI: |
+    veracrypt --text --test
+    veracrypt --text --version
+  CPP_UNINSTALL_SCRIPT_GUI: |
+    apt-get remove -y veracrypt || true
+  CPP_RUN_MOUNT_TESTS: 'false'
+  CPP_MOUNT_TESTS_SCRIPT: |
+    mkdir -p /media/veracrypt1 /media/veracrypt2 /media/veracrypt3 /media/veracrypt4
+    veracrypt --non-interactive Tests/test.sha256.hc --hash sha256 --slot 1 --password test --mount-options=ro
+    veracrypt --non-interactive Tests/test.sha512.hc --hash sha512 --slot 2 --password test --mount-options=ro
+    veracrypt --non-interactive Tests/test.streebog.hc --hash streebog --slot 3 --password test --mount-options=ro
+    veracrypt --non-interactive Tests/test.whirlpool.hc --hash whirlpool --slot 4 --password test --mount-options=ro
+    veracrypt --list
+    echo -n "Dummy" > /tmp/expected_content.txt
+    if cmp -s /media/veracrypt1/dummy.txt /tmp/expected_content.txt; then
+      echo "Content of test.sha256.hc is valid."
+    else
+      echo "Content of test.sha256.hc is invalid!"
+      exit 1
+    fi
+    if cmp -s /media/veracrypt2/dummy.txt /tmp/expected_content.txt; then
+      echo "Content of test.sha512.hc is valid."
+    else
+      echo "Content of test.sha512.hc is invalid!"
+      exit 1
+    fi
+    if cmp -s /media/veracrypt3/dummy.txt /tmp/expected_content.txt; then
+      echo "Content of test.streebog.hc is valid."
+    else
+      echo "Content of test.streebog.hc is invalid!"
+      exit 1
+    fi
+    if cmp -s /media/veracrypt4/dummy.txt /tmp/expected_content.txt; then
+      echo "Content of test.whirlpool.hc is valid."
+    else
+      echo "Content of test.whirlpool.hc is invalid!"
+      exit 1
+    fi
+    veracrypt -d
   # GH_FORCE_PUSH: 'true'
