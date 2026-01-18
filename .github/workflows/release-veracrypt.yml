@@ -44,8 +44,8 @@ jobs:
           fi
           echo "artifact_prefix=veracrypt-${mode}-debs-${version}" >> "$GITHUB_OUTPUT"
           echo "artifact_dir=${artifact_dir}" >> "$GITHUB_OUTPUT"
-          echo "checksum=packages/artifacts/veracrypt-${mode}-sha256-checksums-${version}.txt" >> "$GITHUB_OUTPUT"
-          echo "artifacts=packages/artifacts/${artifact_dir}/*.deb,packages/artifacts/veracrypt-${mode}-sha256-checksums-${version}.txt" >> "$GITHUB_OUTPUT"
+          echo "checksum=packages/veracrypt-${mode}-sha256-checksums-${version}.txt" >> "$GITHUB_OUTPUT"
+          echo "artifacts=packages/${artifact_dir}/*.deb,packages/veracrypt-${mode}-sha256-checksums-${version}.txt" >> "$GITHUB_OUTPUT"
 
       - name: Download artifacts
         env:
@@ -68,7 +68,7 @@ jobs:
         run: |
           ls -la packages
           test -f "${{ steps.tag.outputs.checksum }}"
-          ls packages/artifacts/${{ steps.tag.outputs.artifact_dir }}/*.deb
+          ls packages/${{ steps.tag.outputs.artifact_dir }}/*.deb
 
       - name: Create GitHub release
         uses: ncipollo/release-action@b7eabc95ff50cbeeedec83973935c8f306dfcd0b # v1.20.0
