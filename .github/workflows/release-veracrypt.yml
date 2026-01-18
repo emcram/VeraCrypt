@@ -1,0 +1,74 @@
+name: Release VeraCrypt
+
+on:
+  workflow_run:
+    workflows: ["Build VeraCrypt"]
+    types: [completed]
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  release:
+    name: Create GitHub release (linux)
+    runs-on: ubuntu-24.04
+    if: |
+      github.event.workflow_run.conclusion == 'success' &&
+      startsWith(github.event.workflow_run.head_branch, 'gl-veracrypt-')
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+
+      - name: Resolve tag
+        id: tag
+        run: |
+          TAG="${{ github.event.workflow_run.head_branch }}"
+          if [[ ! "${TAG}" =~ ^gl-veracrypt-[0-9]+\.[0-9]+\.[0-9]+(-r[0-9]+)?$ ]]; then
+            echo "Unexpected tag ${TAG}." >&2
+            exit 1
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          version="${TAG#gl-veracrypt-}"
+          version="${version%%-r*}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Download artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          api="https://api.github.com/repos/${GH_REPO}/actions/runs/${RUN_ID}/artifacts"
+          resp="$(curl -sS -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "${api}")"
+          artifact_url="$(printf '%s' "${resp}" | python3 -c "import json,sys; data=json.load(sys.stdin); url=next((a['archive_download_url'] for a in data.get('artifacts', []) if (not a.get('expired') and a.get('name','').startswith('veracrypt-linux-debs-'))), ''); print(url)")" || {
+            echo "No artifacts found for run ${RUN_ID}." >&2
+            echo "${resp}" >&2
+            exit 1
+          }
+          mkdir -p packages
+          curl -sS -L -H "Authorization: Bearer ${GH_TOKEN}" -o /tmp/artifact.zip "${artifact_url}"
+          unzip -q /tmp/artifact.zip -d packages
+
+      - name: Verify artifacts
+        run: |
+          ls -la packages
+          test -f "packages/artifacts/veracrypt-sha256-checksums-${{ steps.tag.outputs.version }}.txt"
+          ls packages/artifacts/gui/*.deb
+          ls packages/artifacts/console/*.deb
+
+      - name: Create GitHub release
+        uses: ncipollo/release-action@b7eabc95ff50cbeeedec83973935c8f306dfcd0b # v1.20.0
+        with:
+          artifacts: packages/artifacts/gui/*.deb,packages/artifacts/console/*.deb,packages/artifacts/veracrypt-sha256-checksums-${{ steps.tag.outputs.version }}.txt
+          tag: ${{ steps.tag.outputs.tag }}
+          name: VeraCrypt ${{ steps.tag.outputs.version }}
+          generateReleaseNotes: true
+          draft: false
+          allowUpdates: true
+          replacesArtifacts: true
+          token: ${{ secrets.GITHUB_TOKEN }}
