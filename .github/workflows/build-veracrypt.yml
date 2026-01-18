@@ -91,6 +91,7 @@ jobs:
       WXWIDGETS_VERSION: 3.2.5
       PACKAGE_VERSION: ${{ needs.setup.outputs.package_version }}
       BUILD_MODE: ${{ needs.setup.outputs.build_mode }}
+      SOURCEPATH: ${{ github.workspace }}/src
     steps:
       - name: Checkout repo
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
