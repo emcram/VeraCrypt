@@ -26,6 +26,7 @@ include:
 # Repo-specific overrides for this workspace
 variables:
   WXWIDGETS_VERSION: '3.2.5'
+  VC_BUILD_MODE: 'cli'
   VC_INSTALL_TESTS: 'true'
   VC_RUN_MOUNT_TESTS: 'false'
   # GH_FORCE_PUSH: 'true'
