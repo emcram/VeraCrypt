@@ -1,0 +1,32 @@
+workflow:
+  rules:
+    - if: '$CI_COMMIT_TAG'
+    - if: '$CI_COMMIT_REF_PROTECTED == "true"'
+    - when: never
+
+stages:
+  - verify
+  - test
+  - github-sync
+
+include:
+  - project: '${GL_CICD_SHARED_PROJ}'
+    ref: main
+    file: '/veracrypt/verify.yml'
+  - project: '${GL_CICD_SHARED_PROJ}'
+    ref: main
+    file: '/veracrypt/test.yml'
+  - project: '${GL_CICD_SHARED_PROJ}'
+    ref: main
+    file: '/github/validate.yml'
+  - project: '${GL_CICD_SHARED_PROJ}'
+    ref: main
+    file: '/github/push.yml'
+
+# Repo-specific overrides for this workspace
+variables:
+  WXWIDGETS_VERSION: '3.2.5'
+  VC_BUILD_ARGS: 'WXSTATIC INDICATOR'
+  VC_INSTALL_TESTS: 'true'
+  VC_RUN_MOUNT_TESTS: 'false'
+  # GH_FORCE_PUSH: 'true'
