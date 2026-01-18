@@ -3,8 +3,21 @@ name: Build VeraCrypt
 on:
   push:
     tags:
-      - "gl-veracrypt-*"
+      - "gl-veracrypt-v*-cli"
+      - "gl-veracrypt-v*-gui"
   workflow_dispatch:
+    inputs:
+      build_mode:
+        description: "Build mode (cli or gui)"
+        type: choice
+        required: true
+        options:
+          - cli
+          - gui
+        default: cli
+      version:
+        description: "Package version (e.g. 0.26.0)"
+        required: true
 
 permissions:
   contents: read
@@ -19,7 +32,8 @@ jobs:
     name: Setup
     runs-on: ubuntu-24.04
     outputs:
-      package_version: ${{ steps.tag.outputs.version }}
+      package_version: ${{ steps.tag.outputs.package_version }}
+      build_mode: ${{ steps.tag.outputs.build_mode }}
       release_tag: ${{ steps.tag.outputs.tag }}
     steps:
       - name: Checkout repo
@@ -47,15 +61,26 @@ jobs:
       - name: Resolve tag
         id: tag
         run: |
-          TAG="${GITHUB_REF#refs/tags/}"
-          if [[ ! "${TAG}" =~ ^gl-veracrypt-[0-9]+\.[0-9]+\.[0-9]+(-r[0-9]+)?$ ]]; then
-            echo "Invalid tag: ${TAG}. Expected gl-veracrypt-<semver> (e.g. gl-veracrypt-1.26.27)." >&2
-            exit 1
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            if [[ ! "${TAG}" =~ ^gl-veracrypt-v([0-9]+\.[0-9]+\.[0-9]+)(-r[0-9]+)?-(cli|gui)$ ]]; then
+              echo "Invalid tag: ${TAG}. Expected gl-veracrypt-v<semver>-(cli|gui), e.g. gl-veracrypt-v0.26.0-cli." >&2
+              exit 1
+            fi
+            version="${BASH_REMATCH[1]}"
+            mode="${BASH_REMATCH[3]}"
+          else
+            version="${{ inputs.version }}"
+            mode="${{ inputs.build_mode }}"
+            if [[ -z "${version}" ]]; then
+              echo "version input is required for workflow_dispatch." >&2
+              exit 1
+            fi
+            TAG="manual-${version}-${mode}"
           fi
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          version="${TAG#gl-veracrypt-}"
-          version="${version%%-r*}"
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "package_version=${version}" >> "$GITHUB_OUTPUT"
+          echo "build_mode=${mode}" >> "$GITHUB_OUTPUT"
 
   build-linux:
     name: Build VeraCrypt (linux)
@@ -65,6 +90,7 @@ jobs:
     env:
       WXWIDGETS_VERSION: 3.2.5
       PACKAGE_VERSION: ${{ needs.setup.outputs.package_version }}
+      BUILD_MODE: ${{ needs.setup.outputs.build_mode }}
     steps:
       - name: Checkout repo
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -78,6 +104,11 @@ jobs:
             build-essential yasm pkg-config libpcsclite-dev libfuse-dev cmake debhelper \
             wget tar bzip2 ca-certificates nodejs npm
           sudo rm -rf /var/lib/apt/lists/*
+          if [ "${BUILD_MODE}" = "gui" ]; then
+            sudo apt-get update -y
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libgtk-3-dev libayatana-appindicator3-dev
+            sudo rm -rf /var/lib/apt/lists/*
+          fi
 
       - name: Validate translations XML
         run: |
@@ -93,26 +124,67 @@ jobs:
             tar -xjf "${wx_tar}" -C "/tmp/wxWidgets-${WXWIDGETS_VERSION}" --strip-components=1
           fi
 
-      - name: Build VeraCrypt CLI .deb package
+      - name: Build VeraCrypt .deb package
         run: |
-          make -C src WXSTATIC=1 NOGUI=1 WX_ROOT="/tmp/wxWidgets-${WXWIDGETS_VERSION}" WX_BUILD_DIR="/tmp/wxBuildConsole" wxbuild
-          make -C src WXSTATIC=1 NOGUI=1 WX_ROOT="/tmp/wxWidgets-${WXWIDGETS_VERSION}" WX_BUILD_DIR="/tmp/wxBuildConsole" clean
-          make -C src WXSTATIC=1 NOGUI=1 WX_ROOT="/tmp/wxWidgets-${WXWIDGETS_VERSION}" WX_BUILD_DIR="/tmp/wxBuildConsole"
-          make -C src WXSTATIC=1 NOGUI=1 WX_ROOT="/tmp/wxWidgets-${WXWIDGETS_VERSION}" WX_BUILD_DIR="/tmp/wxBuildConsole" install DESTDIR="/tmp/VeraCrypt_Setup/Console"
-          cmake -H"${GITHUB_WORKSPACE}/src/Build" -B"/tmp/VeraCrypt_Packaging/Console" -DVERACRYPT_BUILD_DIR="/tmp/VeraCrypt_Setup/Console" -DNOGUI=TRUE
-          cpack --config /tmp/VeraCrypt_Packaging/Console/CPackConfig.cmake
+          case "${BUILD_MODE}" in
+            cli)
+              make -C src WXSTATIC=1 NOGUI=1 WX_ROOT="/tmp/wxWidgets-${WXWIDGETS_VERSION}" WX_BUILD_DIR="/tmp/wxBuildConsole" wxbuild
+              make -C src WXSTATIC=1 NOGUI=1 WX_ROOT="/tmp/wxWidgets-${WXWIDGETS_VERSION}" WX_BUILD_DIR="/tmp/wxBuildConsole" clean
+              make -C src WXSTATIC=1 NOGUI=1 WX_ROOT="/tmp/wxWidgets-${WXWIDGETS_VERSION}" WX_BUILD_DIR="/tmp/wxBuildConsole"
+              make -C src WXSTATIC=1 NOGUI=1 WX_ROOT="/tmp/wxWidgets-${WXWIDGETS_VERSION}" WX_BUILD_DIR="/tmp/wxBuildConsole" install DESTDIR="/tmp/VeraCrypt_Setup/Console"
+              cmake -H"${GITHUB_WORKSPACE}/src/Build" -B"/tmp/VeraCrypt_Packaging/Console" -DVERACRYPT_BUILD_DIR="/tmp/VeraCrypt_Setup/Console" -DNOGUI=TRUE
+              cpack --config /tmp/VeraCrypt_Packaging/Console/CPackConfig.cmake
+              ;;
+            gui)
+              make -C src WXSTATIC=1 WX_ROOT="/tmp/wxWidgets-${WXWIDGETS_VERSION}" WX_BUILD_DIR="/tmp/wxBuildGui" wxbuild
+              make -C src WXSTATIC=1 WX_ROOT="/tmp/wxWidgets-${WXWIDGETS_VERSION}" WX_BUILD_DIR="/tmp/wxBuildGui" clean
+              make -C src WXSTATIC=1 WX_ROOT="/tmp/wxWidgets-${WXWIDGETS_VERSION}" WX_BUILD_DIR="/tmp/wxBuildGui"
+              make -C src WXSTATIC=1 WX_ROOT="/tmp/wxWidgets-${WXWIDGETS_VERSION}" WX_BUILD_DIR="/tmp/wxBuildGui" install DESTDIR="/tmp/VeraCrypt_Setup/GUI"
+              cmake -H"${GITHUB_WORKSPACE}/src/Build" -B"/tmp/VeraCrypt_Packaging/GUI" -DVERACRYPT_BUILD_DIR="/tmp/VeraCrypt_Setup/GUI" -DNOGUI=FALSE
+              cpack --config /tmp/VeraCrypt_Packaging/GUI/CPackConfig.cmake
+              ;;
+            *)
+              echo "Unsupported BUILD_MODE: ${BUILD_MODE}. Use 'cli' or 'gui'." >&2
+              exit 1
+              ;;
+          esac
 
       - name: Collect artifacts
         run: |
-          mkdir -p artifacts/console
-          cp /tmp/VeraCrypt_Packaging/Console/Packaging/veracrypt-console-* artifacts/console/
-          (cd artifacts && sha256sum console/* > "veracrypt-cli-sha256-checksums-${PACKAGE_VERSION}.txt")
+          case "${BUILD_MODE}" in
+            cli)
+              mkdir -p artifacts/console
+              cp /tmp/VeraCrypt_Packaging/Console/Packaging/veracrypt-console-* artifacts/console/
+              (cd artifacts && sha256sum console/* > "veracrypt-cli-sha256-checksums-${PACKAGE_VERSION}.txt")
+              ;;
+            gui)
+              mkdir -p artifacts/gui
+              cp /tmp/VeraCrypt_Packaging/GUI/Packaging/veracrypt-* artifacts/gui/
+              (cd artifacts && sha256sum gui/* > "veracrypt-gui-sha256-checksums-${PACKAGE_VERSION}.txt")
+              ;;
+            *)
+              echo "Unsupported BUILD_MODE: ${BUILD_MODE}. Use 'cli' or 'gui'." >&2
+              exit 1
+              ;;
+          esac
 
-      - name: Install and test VeraCrypt CLI .deb package
+      - name: Install and test VeraCrypt package
         run: |
           sudo apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ./artifacts/console/*.deb
-          veracrypt --test && veracrypt --version
+          case "${BUILD_MODE}" in
+            cli)
+              sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ./artifacts/console/*.deb
+              veracrypt --test && veracrypt --version
+              ;;
+            gui)
+              sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ./artifacts/gui/*.deb
+              veracrypt --text --test && veracrypt --text --version
+              ;;
+            *)
+              echo "Unsupported BUILD_MODE: ${BUILD_MODE}. Use 'cli' or 'gui'." >&2
+              exit 1
+              ;;
+          esac
           sudo veracrypt --non-interactive Tests/test.sha256.hc --hash sha256 --slot 1 --password test --mount-options=ro
           sudo veracrypt --non-interactive Tests/test.sha512.hc --hash sha512 --slot 2 --password test --mount-options=ro
           sudo veracrypt --non-interactive Tests/test.streebog.hc --hash streebog --slot 3 --password test --mount-options=ro
@@ -144,13 +216,28 @@ jobs:
             exit 1
           fi
           sudo veracrypt -d
-          sudo apt-get remove -y veracrypt-console
+          if [ "${BUILD_MODE}" = "cli" ]; then
+            sudo apt-get remove -y veracrypt-console
+          else
+            sudo apt-get remove -y veracrypt
+          fi
 
-      - name: Upload artifacts
+      - name: Upload CLI artifacts
+        if: env.BUILD_MODE == 'cli'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: veracrypt-cli-debs-${{ env.PACKAGE_VERSION }}
           path: |
             artifacts/console/*.deb
             artifacts/veracrypt-cli-sha256-checksums-${{ env.PACKAGE_VERSION }}.txt
+          if-no-files-found: error
+
+      - name: Upload GUI artifacts
+        if: env.BUILD_MODE == 'gui'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: veracrypt-gui-debs-${{ env.PACKAGE_VERSION }}
+          path: |
+            artifacts/gui/*.deb
+            artifacts/veracrypt-gui-sha256-checksums-${{ env.PACKAGE_VERSION }}.txt
           if-no-files-found: error
